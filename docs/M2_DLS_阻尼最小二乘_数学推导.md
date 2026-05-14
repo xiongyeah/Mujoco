@@ -1,6 +1,6 @@
 # M2 · 阻尼最小二乘（Damped Least Squares, DLS）数学推导
 
-> **公式预览**：建议用 **Markdown+Math**、**Typora** 或 **Obsidian** 打开。下文使用 `\lVert \rVert`、分块矩阵等写法，便于 **KaTeX** 渲染。
+> **公式预览**：建议用 **Markdown+Math**、**Typora** 或 **Obsidian** 打开。下文使用 `\| \|`、分块矩阵等写法，便于 **KaTeX** 渲染。
 
 本文与「雅可比伪逆迭代」配套：在**奇异或接近奇异**的位形下，标准伪逆
 
@@ -22,7 +22,7 @@ $$
 
 其中 $J \in \mathbb{R}^{m \times n}$（对 FR3 末端 6 维约束、7 关节时 $m=6$，$n=7$），$e \in \mathbb{R}^{m}$ 为当前任务空间误差（位置或位姿误差向量，与所用雅可比约定一致）。
 
-**伪逆解**（无阻尼）在相容时取 $\Delta q = J^\dagger e$，等价于在「$J\Delta q=e$ 的所有解」中选 $\lVert \Delta q \rVert$ 最小者。当 $J$ 接近秩亏时，$J^\dagger$ **范数很大**，$\Delta q$ 不稳定。
+**伪逆解**（无阻尼）在相容时取 $\Delta q = J^\dagger e$，等价于在「$J\Delta q=e$ 的所有解」中选 $\| \Delta q \|$ 最小者。当 $J$ 接近秩亏时，$J^\dagger$ **范数很大**，$\Delta q$ 不稳定。
 
 ---
 
@@ -33,9 +33,9 @@ $$
 $$
 \min_{\Delta q \in \mathbb{R}^{n}}
 \;
-\lVert J \Delta q - e \rVert_{2}^{2}
+\| J \Delta q - e \|_{2}^{2}
 \;+\;
-\lambda^{2} \, \lVert \Delta q \rVert_{2}^{2},
+\lambda^{2} \, \| \Delta q \|_{2}^{2},
 $$
 
 其中 **$\lambda > 0$** 为**阻尼系数**（标量，也可推广为对角阵，此处从标量推导）。
@@ -153,13 +153,13 @@ $$
 
 3. 更新 $q \leftarrow q + \alpha \, \Delta q$（$\alpha$ 为步长，可与伪逆迭代相同）。
 
-重复直至 $\lVert e \rVert < \varepsilon$ 或达最大迭代次数。
+重复直至 $\| e \| < \varepsilon$ 或达最大迭代次数。
 
 ---
 
 ## 7. 阻尼 $\lambda$ 与步长 $\alpha$ 的选择（工程说明）
 
-- **$\lambda$ 大**：更强调 $\lVert \Delta q \rVert$ 小，**更稳**但**收敛变慢**、对误差修正变「钝」。  
+- **$\lambda$ 大**：更强调 $\| \Delta q \|$ 小，**更稳**但**收敛变慢**、对误差修正变「钝」。  
 - **$\lambda$ 小**：接近伪逆，在远离奇异时跟踪好，但在奇异附近仍可能抖。  
 - **$\alpha$**：与伪逆迭代相同，限制单步关节变化，改善线性化有效性。
 
@@ -174,7 +174,7 @@ $$
 | 伪逆 | $J^{\top} \left( J J^{\top} \right)^{-1} e$（$J J^\top$ 可逆时） |
 | DLS | $J^{\top} \left( J J^{\top} + \lambda^{2} I \right)^{-1} e$ |
 
-`numpy.linalg.lstsq(J, e)` 求的是 **无正则** 的 $\min \lVert J\Delta q - e \rVert^2$ 的最小范数解；**DLS 不能**用「同一个 `lstsq(J,e)`」直接代替，需显式实现上式或左形式 $\left( J^{\top} J + \lambda^{2} I \right)^{-1} J^{\top} e$。
+`numpy.linalg.lstsq(J, e)` 求的是 **无正则** 的 $\min \| J\Delta q - e \|^2$ 的最小范数解；**DLS 不能**用「同一个 `lstsq(J,e)`」直接代替，需显式实现上式或左形式 $\left( J^{\top} J + \lambda^{2} I \right)^{-1} J^{\top} e$。
 
 ---
 
