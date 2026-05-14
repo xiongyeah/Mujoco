@@ -411,3 +411,60 @@ def plot_sweep_comparison(
     out_png.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_png, dpi=160)
     plt.close(fig)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="FR3 全奇异类型稳定性 Benchmark")
+    ap.add_argument("--damping", type=float, nargs="+", default=[0.02, 0.05, 0.2],
+                    help="DLS λ 列表")
+    ap.add_argument("--tol", type=float, default=7e-4)
+    ap.add_argument("--max-iters", type=int, default=500)
+    ap.add_argument("--step-scale", type=float, default=0.55)
+    ap.add_argument("--rcond", type=float, default=1e-4)
+    ap.add_argument("--seed", type=int, default=20260514)
+    ap.add_argument("--out", type=Path, default=ROOT / "outputs" / "singularity_benchmark")
+    args = ap.parse_args()
+
+    try:
+        import matplotlib as mpl
+    except ImportError as e:
+        raise SystemExit("需要 matplotlib：请先 pip install -r requirements.txt") from e
+
+    mpl.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
+    mpl.rcParams["axes.unicode_minus"] = False
+
+    dampings = {f"dls_{d:.4f}".rstrip("0").rstrip("."): d for d in args.damping}
+    methods = ["pinv"] + list(dampings.keys())
+    out_dir = args.out
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. 定义工况
+    cases = define_cases(args.seed)
+
+    # 2. 采集
+    records = collect_records(
+        cases,
+        methods=methods,
+        tol=args.tol,
+        max_iters=args.max_iters,
+        rcond=args.rcond,
+        step_scale=args.step_scale,
+    )
+
+    # 3. CSV
+    csv_path = out_dir / "singularity_benchmark_trials.csv"
+    write_csv(csv_path, records)
+    print(f"已写入: {csv_path}")
+
+    # 4. 聚合
+    agg = aggregate_by_dist_bins(records, n_bins=15)
+
+    # 5. 出图
+    for sweep_mode in ("joint", "task", "random"):
+        png_path = out_dir / f"sweep_{sweep_mode}.png"
+        plot_sweep_comparison(agg, sweep_mode, out_png=png_path, methods=methods)
+        print(f"已写入: {png_path}")
+
+
+if __name__ == "__main__":
+    main()
