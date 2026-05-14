@@ -14,13 +14,16 @@ from m2_ik import forward_kinematics, inverse_kinematics, pose_error_se3
 
 
 def main() -> None:
+    # 构造目标：先取参考关节 q_ref 的 FK，再在位置上加一点偏置，得到待求 T_des
     q_ref = np.array([0.0, -0.35, 0.4, -1.35, 0.05, 1.55, -0.25], dtype=np.float64)
     T_des = forward_kinematics(q_ref)
     T_des[:3, 3] += np.array([0.02, -0.015, 0.01], dtype=np.float64)
 
-    q0 = np.zeros(7, dtype=np.float64)
+    q0 = np.zeros(7, dtype=np.float64)  # 迭代初值 q^{(0)}
+    # 调用整条伪逆迭代：内部重复「FK→e→J→lstsq→更新 q」直至 ‖e‖<tol
     q_sol, iters, err = inverse_kinematics(T_des, q0, method="pinv")
 
+    # 验算：用解出的 q_sol 再做 FK，与 T_des 比 6 维位姿误差
     T_act = forward_kinematics(q_sol)
     err6 = pose_error_se3(T_act, T_des)
 

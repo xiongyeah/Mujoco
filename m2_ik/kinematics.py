@@ -18,6 +18,7 @@ def _R_wxyz(w: float, x: float, y: float, z: float) -> np.ndarray:
 
 
 def _segment_fixed_A(j: int) -> np.ndarray:
+    # DH 链：第 j 节「固定部分」齐次变换 A_j（不含关节变量 θ_j 的 Rz）
     if j == 0:
         return trans(0.0, 0.0, 0.333)
     if j == 1:
@@ -36,6 +37,7 @@ def _segment_fixed_A(j: int) -> np.ndarray:
 
 
 def fk_link7(q: np.ndarray) -> np.ndarray:
+    # FK 递推：^0T_link7 = Π_j ( A_j · Rz(q_j) )
     q = np.asarray(q, dtype=np.float64).reshape(7)
     T = np.eye(4, dtype=np.float64)
     for j in range(7):
@@ -46,18 +48,21 @@ def fk_link7(q: np.ndarray) -> np.ndarray:
 
 def forward_kinematics(q: np.ndarray) -> np.ndarray:
     """末端 attachment（法兰 + 0.107 m）在基座系下的 4×4 齐次矩阵。"""
+    # IK 里记 T(q)：link7 再乘末端偏移，得到与雅可比一致的末端帧
     return fk_link7(q) @ trans(0.0, 0.0, 0.107)
 
 
 def pose_error_se3(T_cur: np.ndarray, T_des: np.ndarray) -> np.ndarray:
     """6 维误差 [Δp; log(R_err)]，与几何雅可比同一约定。"""
+    # 旋转误差：R_err = R_d · R^T；与平移误差一起组成 e ∈ R^6
     R_err = T_des[:3, :3] @ T_cur[:3, :3].T
-    t = T_des[:3, 3] - T_cur[:3, 3]
+    t = T_des[:3, 3] - T_cur[:3, 3]  # 位置部分 e_p = p_d - p
     tr = float(np.clip((np.trace(R_err) - 1.0) * 0.5, -1.0, 1.0))
     theta = float(np.arccos(tr))
     if theta < 1e-8:
         w = np.zeros(3, dtype=np.float64)
     else:
+        # 姿态部分：由 R_err 提取等效轴角（小角近似 θ≈0 时 w=0）
         w_hat = (R_err - R_err.T) / (2.0 * np.sin(theta))
         w = np.array([w_hat[2, 1], w_hat[0, 2], w_hat[1, 0]], dtype=np.float64) * theta
     return np.concatenate([t, w], axis=0)
@@ -69,6 +74,7 @@ def jacobian(q: np.ndarray, ee_offset_local: np.ndarray | None = None) -> np.nda
     if ee_offset_local is None:
         ee_offset_local = np.array([0.0, 0.0, 0.107], dtype=np.float64)
 
+    # 前向递推各关节轴 z_j 与轴上点 o_j（几何法列雅可比）
     T = np.eye(4, dtype=np.float64)
     z_cols: list[np.ndarray] = []
     o_cols: list[np.ndarray] = []
@@ -83,8 +89,9 @@ def jacobian(q: np.ndarray, ee_offset_local: np.ndarray | None = None) -> np.nda
         T = P @ homogeneous(rotz(q[j]), np.zeros(3))
 
     Tee = T @ trans(ee_offset_local[0], ee_offset_local[1], ee_offset_local[2])
-    p_e = Tee[:3, 3]
+    p_e = Tee[:3, 3]  # 末端（attachment）位置，用于叉乘列
 
+    # 组装 J：平移列 z×(p_e−o_j)，旋转列 z_j（标准几何雅可比）
     J = np.zeros((6, 7), dtype=np.float64)
     for j in range(7):
         z_j = z_cols[j]
