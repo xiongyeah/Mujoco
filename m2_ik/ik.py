@@ -1,7 +1,9 @@
-"""
-M2 · 数值解 1：Jacobian 伪逆迭代（单步用 ``numpy.linalg.lstsq`` 稳定求 Δq）。
+r"""
+M2 · 数值逆解：Jacobian 伪逆迭代 + 阻尼最小二乘（DLS）。
 
-仅实现 ``method='pinv'``；DLS、零空间等后续再加。
+- 伪逆单步：``lstsq(J, e)``，等价最小范数解 :math:`J^+ e`（行满秩、相容时）。
+- DLS 单步：:math:`\Delta q = J^{\top}(JJ^{\top}+\lambda^2 I)^{-1} e`
+  （与 ``docs/M2_DLS_阻尼最小二乘_数学推导.md`` 右形式一致）。
 """
 
 from __future__ import annotations
@@ -12,7 +14,25 @@ import numpy as np
 
 from m2_ik.kinematics import forward_kinematics, jacobian, pose_error_se3
 
-IkMethod = Literal["pinv"]
+IkMethod = Literal["pinv", "dls"]
+
+
+def _task_error_and_jacobian(
+    q: np.ndarray,
+    T_des: np.ndarray,
+    *,
+    position_only: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """当前 q 下：FK 得 T，再算任务误差 e 与雅可比 J。"""
+    q = np.asarray(q, dtype=np.float64).reshape(7)
+    T = forward_kinematics(q)
+    if position_only:
+        e = T_des[:3, 3] - T[:3, 3]
+        J = jacobian(q)[:3, :]
+    else:
+        e = pose_error_se3(T, T_des)
+        J = jacobian(q)
+    return q, e, J
 
 
 def ik_pinv_step(
@@ -23,25 +43,40 @@ def ik_pinv_step(
     step_scale: float = 1.0,
     position_only: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
+    r"""
+    伪逆一步：:math:`\Delta q = J^+ e`（``lstsq``），:math:`q \leftarrow q + \alpha \Delta q`。
     """
-    伪逆迭代的「单步」：在当前 q 上算 e、J，解 JΔq≈e，再 q←q+αΔq。
-    对应公式：Δq = J⁺e（lstsq 给出最小范数最小二乘意义下的 J⁺e），α = step_scale。
-    """
-    q = np.asarray(q, dtype=np.float64).reshape(7).copy()
-    # ① 正运动学：由当前关节角算末端位姿 T(q)，用于构造误差
-    T = forward_kinematics(q)
-    if position_only:
-        # ①′（仅位置模式）位置误差 e_p = p_d - p(q)；雅可比取平移前三行 J_p
-        e = T_des[:3, 3] - T[:3, 3]
-        J = jacobian(q)[:3, :]
-    else:
-        # ② 工作空间误差：e(q) ∈ R^6，与几何雅可比同一套空间速度约定
-        e = pose_error_se3(T, T_des)
-        # ③ 在当前 q 处计算几何雅可比 J(q)，用于一阶近似 JΔq ≈ e
-        J = jacobian(q)
-    # ④ 求本步关节增量：Δq = J⁺ e（超定/欠定均由 lstsq 稳定求解，行满秩时等价 J^T(JJ^T)^{-1}e）
+    q, e, J = _task_error_and_jacobian(q, T_des, position_only=position_only)
     dq, *_ = np.linalg.lstsq(J, e, rcond=rcond)
-    # ⑤ 关节更新：q^{k+1} = q^k + α·Δq（α 防止一步过大，保证线性化有效）
+    return q + step_scale * dq, e
+
+
+def ik_dls_step(
+    q: np.ndarray,
+    T_des: np.ndarray,
+    *,
+    damping: float,
+    step_scale: float = 1.0,
+    position_only: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    r"""
+    DLS 一步：:math:`\Delta q = J^{\top}(JJ^{\top}+\lambda^2 I)^{-1} e`，
+    :math:`q \leftarrow q + \alpha \Delta q`。
+
+    Parameters
+    ----------
+    damping
+        阻尼系数 :math:`\lambda>0`。对应 Tikhonov 项 :math:`\lambda^2 \lVert \Delta q \rVert^2`。
+    """
+    if damping <= 0.0:
+        raise ValueError("damping (λ) 必须为正标量")
+
+    q, e, J = _task_error_and_jacobian(q, T_des, position_only=position_only)
+    m = J.shape[0]
+    # Δq = Jᵀ (J Jᵀ + λ² I)⁻¹ e
+    aat = J @ J.T + (damping * damping) * np.eye(m, dtype=np.float64)
+    x = np.linalg.solve(aat, np.asarray(e, dtype=np.float64).reshape(m))
+    dq = J.T @ x
     return q + step_scale * dq, e
 
 
@@ -55,36 +90,49 @@ def inverse_kinematics(
     rcond: float = 1e-4,
     step_scale: float = 0.55,
     position_only: bool = False,
+    damping: float = 0.05,
 ) -> tuple[np.ndarray, int, float]:
-    """
+    r"""
     迭代逆解。
 
     Parameters
     ----------
-    target_pose
-        4×4 齐次目标位姿（与 ``forward_kinematics`` 同一末端定义）。
-    q_init
-        初始关节角 (7,)。
     method
-        当前仅支持 ``'pinv'``。
+        ``'pinv'``：伪逆单步；``'dls'``：阻尼最小二乘单步。
+    damping
+        仅 ``method='dls'`` 时使用，为 :math:`\lambda`（默认 ``0.05``）。
 
     Returns
     -------
     q, iters, final_err_norm
     """
-    if method != "pinv":
-        raise NotImplementedError("当前仅实现 method='pinv'（Jacobian 伪逆迭代）")
-
-    # ⑥ 初始化：给定目标位姿 T_d 与迭代初值 q^{(0)}
     T_des = np.asarray(target_pose, dtype=np.float64).reshape(4, 4)
     q = np.asarray(q_init, dtype=np.float64).reshape(7).copy()
     final_err = np.inf
     it = 0
-    # ⑦ 迭代直至 ‖e‖<tol 或达到最大次数（每轮调用 ik_pinv_step = 重复「线性化+伪逆一步」）
+
     for it in range(max_iters):
-        q, e = ik_pinv_step(q, T_des, rcond=rcond, step_scale=step_scale, position_only=position_only)
+        if method == "pinv":
+            q, e = ik_pinv_step(
+                q,
+                T_des,
+                rcond=rcond,
+                step_scale=step_scale,
+                position_only=position_only,
+            )
+        elif method == "dls":
+            q, e = ik_dls_step(
+                q,
+                T_des,
+                damping=damping,
+                step_scale=step_scale,
+                position_only=position_only,
+            )
+        else:
+            raise ValueError(f"未知 method: {method!r}，应为 'pinv' 或 'dls'")
+
         final_err = float(np.linalg.norm(e))
-        # ⑧ 收敛判据：‖e(q)‖ < ε
         if final_err < tol:
             break
+
     return q, it + 1, final_err

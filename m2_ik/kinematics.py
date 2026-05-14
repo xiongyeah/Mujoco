@@ -18,7 +18,7 @@ def _R_wxyz(w: float, x: float, y: float, z: float) -> np.ndarray:
 
 
 def _segment_fixed_A(j: int) -> np.ndarray:
-    # DH 链：第 j 节「固定部分」齐次变换 A_j（不含关节变量 θ_j 的 Rz）
+    # 固定段变换 A_j（不含关节旋转），链式：A_j · Rz(q_j)
     if j == 0:
         return trans(0.0, 0.0, 0.333)
     if j == 1:
@@ -61,8 +61,15 @@ def pose_error_se3(T_cur: np.ndarray, T_des: np.ndarray) -> np.ndarray:
     theta = float(np.arccos(tr))
     if theta < 1e-8:
         w = np.zeros(3, dtype=np.float64)
+    elif theta > np.pi - 1e-6:
+        # θ ≈ π：sinθ ≈ 0，标准轴角公式会 0/0。
+        # R_err 对称，轴为 (R_err + I) 最大范数列，幅值 π。
+        m = R_err + np.eye(3)
+        idx = int(np.argmax(np.linalg.norm(m, axis=0)))
+        axis = m[:, idx]
+        w = (axis / np.linalg.norm(axis)) * np.pi
     else:
-        # 姿态部分：由 R_err 提取等效轴角（小角近似 θ≈0 时 w=0）
+        # 姿态部分：由 R_err 提取等效轴角
         w_hat = (R_err - R_err.T) / (2.0 * np.sin(theta))
         w = np.array([w_hat[2, 1], w_hat[0, 2], w_hat[1, 0]], dtype=np.float64) * theta
     return np.concatenate([t, w], axis=0)
