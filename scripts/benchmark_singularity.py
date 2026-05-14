@@ -96,3 +96,151 @@ def solve_and_record(
             break
 
     return q, it + 1, final_err, max_dq
+
+
+def case_wrist_targets(
+    q5_vals: np.ndarray,
+    ref: np.ndarray,
+) -> dict[str, list[tuple[float, np.ndarray]]]:
+    """手腕奇异：修改 q5，FK 出目标位姿。"""
+    targets: dict[str, list[tuple[float, np.ndarray]]] = {
+        "joint": [], "task": [], "random": []
+    }
+    for q5 in q5_vals:
+        q = ref.copy().astype(np.float64)
+        q[4] = q5
+        T = forward_kinematics(q)
+        dist = abs(q5)
+        targets["joint"].append((dist, T.copy()))
+        for sign in [-1, 1]:
+            Tt = T.copy()
+            Tt[:3, 3] += np.array([sign * 0.05, 0.0, 0.0])
+            targets["task"].append((dist, Tt))
+    rng = np.random.default_rng(20260514)
+    for _ in range(200):
+        q5_pert = rng.uniform(-0.3, 0.3)
+        q = ref.copy().astype(np.float64)
+        q[4] = q5_pert
+        T = forward_kinematics(q)
+        targets["random"].append((abs(q5_pert), T.copy()))
+    return targets
+
+
+def case_elbow_targets(
+    q3_vals: np.ndarray,
+    ref: np.ndarray,
+) -> dict[str, list[tuple[float, np.ndarray]]]:
+    """肘部奇异：修改 q3 趋近上限（手臂伸直）。"""
+    q3_max = float(_FRANKA_Q_MAX[2])
+    targets: dict[str, list[tuple[float, np.ndarray]]] = {
+        "joint": [], "task": [], "random": []
+    }
+    for q3 in q3_vals:
+        q = ref.copy().astype(np.float64)
+        q[2] = q3
+        T = forward_kinematics(q)
+        dist = abs(q3_max - q3)
+        targets["joint"].append((dist, T.copy()))
+        for sign in [-1, 1]:
+            Tt = T.copy()
+            Tt[:3, 3] += np.array([0.0, sign * 0.03, 0.0])
+            targets["task"].append((dist, Tt))
+    rng = np.random.default_rng(20260515)
+    for _ in range(200):
+        q3_pert = rng.uniform(-1.5, q3_max - 0.01)
+        q = ref.copy().astype(np.float64)
+        q[2] = q3_pert
+        T = forward_kinematics(q)
+        dist = abs(q3_max - q3_pert)
+        targets["random"].append((dist, T.copy()))
+    return targets
+
+
+def case_shoulder_targets(
+    q1_vals: np.ndarray,
+    q3_vals: np.ndarray,
+    ref: np.ndarray,
+) -> dict[str, list[tuple[float, np.ndarray]]]:
+    """肩部奇异：q1 与 q3 组合导致轴对齐。用最小奇异值比作为距离。"""
+    targets: dict[str, list[tuple[float, np.ndarray]]] = {
+        "joint": [], "task": [], "random": []
+    }
+    for q1 in q1_vals:
+        for q3 in q3_vals:
+            q = ref.copy().astype(np.float64)
+            q[0] = q1
+            q[2] = q3
+            T = forward_kinematics(q)
+            _, _, J = _task_error_and_jacobian(q, T, position_only=False)
+            s = np.linalg.svd(J, compute_uv=False)
+            dist = 1.0 - s[-1] / (s[0] + 1e-15)
+            targets["joint"].append((dist, T.copy()))
+            for sign in [-1, 1]:
+                Tt = T.copy()
+                Tt[:3, 3] += np.array([sign * 0.04, 0.0, 0.0])
+                targets["task"].append((dist, Tt))
+    rng = np.random.default_rng(20260516)
+    for _ in range(200):
+        q1_pert = rng.uniform(-0.5, 0.5)
+        q3_pert = np.pi / 2 + rng.uniform(-0.5, 0.5)
+        q = ref.copy().astype(np.float64)
+        q[0] = q1_pert
+        q[2] = q3_pert
+        T = forward_kinematics(q)
+        _, _, J = _task_error_and_jacobian(q, T, position_only=False)
+        s = np.linalg.svd(J, compute_uv=False)
+        dist = 1.0 - s[-1] / (s[0] + 1e-15)
+        targets["random"].append((dist, T.copy()))
+    return targets
+
+
+def case_boundary_targets(
+    q6_vals: np.ndarray,
+    ref: np.ndarray,
+) -> dict[str, list[tuple[float, np.ndarray]]]:
+    """边界奇异：q6 趋近上限。"""
+    q6_max = float(_FRANKA_Q_MAX[5])
+    targets: dict[str, list[tuple[float, np.ndarray]]] = {
+        "joint": [], "task": [], "random": []
+    }
+    for q6 in q6_vals:
+        q = ref.copy().astype(np.float64)
+        q[5] = q6
+        T = forward_kinematics(q)
+        dist = abs(q6_max - q6)
+        targets["joint"].append((dist, T.copy()))
+        for sign in [-1, 1]:
+            Tt = T.copy()
+            Tt[:3, 3] += np.array([sign * 0.03, 0.0, 0.0])
+            targets["task"].append((dist, Tt))
+    rng = np.random.default_rng(20260517)
+    for _ in range(200):
+        q6_pert = rng.uniform(2.0, q6_max - 0.01)
+        q = ref.copy().astype(np.float64)
+        q[5] = q6_pert
+        T = forward_kinematics(q)
+        dist = abs(q6_max - q6_pert)
+        targets["random"].append((dist, T.copy()))
+    return targets
+
+
+def define_cases(
+    seed: int,
+) -> dict[str, dict[str, list[tuple[float, np.ndarray]]]]:
+    """返回 {case_name: {sweep_mode: [(singular_dist, T_des), ...]}}。"""
+    q5_vals = [
+        -2.0, -1.0, -0.5, -0.2, -0.1, -0.05, -0.02, -0.01, -0.005,
+        0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0,
+    ]
+    q3_max = float(_FRANKA_Q_MAX[2])
+    q3_vals = np.linspace(-1.5, q3_max, 36).tolist()
+    q1_vals = np.linspace(-0.5, 0.5, 7).tolist()
+    q3_vals_s = np.linspace(np.pi / 2 - 0.5, np.pi / 2 + 0.5, 7).tolist()
+
+    cases = {
+        "wrist": case_wrist_targets(np.array(q5_vals, dtype=np.float64), _REF_WRIST),
+        "elbow": case_elbow_targets(np.array(q3_vals, dtype=np.float64), _REF_ELBOW),
+        "shoulder": case_shoulder_targets(np.array(q1_vals, dtype=np.float64), np.array(q3_vals_s, dtype=np.float64), _REF_SHOULDER),
+        "boundary": case_boundary_targets(np.linspace(2.0, _FRANKA_Q_MAX[5], 20), _REF_BOUNDARY),
+    }
+    return cases
