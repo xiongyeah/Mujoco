@@ -286,3 +286,128 @@ def collect_records(
                         manipulability=manip,
                     ))
     return records
+
+
+def write_csv(path: Path, records: list[TrialRecord]) -> None:
+    """将记录写入 CSV 文件。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=[
+            "case", "sweep_mode", "singular_dist", "method",
+            "converged", "iters", "final_err", "max_dq_norm", "manipulability",
+        ])
+        w.writeheader()
+        for r in records:
+            w.writerow({
+                "case": r.case,
+                "sweep_mode": r.sweep_mode,
+                "singular_dist": f"{r.singular_dist:.6e}",
+                "method": r.method,
+                "converged": int(r.converged),
+                "iters": r.iters,
+                "final_err": f"{r.final_err:.6e}",
+                "max_dq_norm": f"{r.max_dq_norm:.6e}",
+                "manipulability": f"{r.manipulability:.6e}",
+            })
+
+
+@dataclass
+class BucketStats:
+    dist_mid: float
+    count: int
+    converge_rate: float
+    mean_iters: float
+    mean_max_dq: float
+    mean_manip: float
+
+
+def aggregate_by_dist_bins(
+    records: list[TrialRecord],
+    *,
+    n_bins: int = 15,
+) -> dict[tuple[str, str, str], dict[int, BucketStats]]:
+    """按 (case, sweep_mode, method) 分桶聚合（对数分桶）。"""
+    groups: dict[tuple[str, str, str], list[TrialRecord]] = {}
+    for r in records:
+        key = (r.case, r.sweep_mode, r.method)
+        groups.setdefault(key, []).append(r)
+
+    result: dict[tuple[str, str, str], dict[int, BucketStats]] = {}
+    for key, recs in groups.items():
+        dists = np.array([r.singular_dist for r in recs], dtype=np.float64)
+        log_dists = np.log10(np.maximum(dists, 1e-15))
+        bin_edges = np.linspace(log_dists.min(), log_dists.max(), n_bins + 1)
+        bin_indices = np.digitize(log_dists, bin_edges) - 1
+        buckets: dict[int, BucketStats] = {}
+        for i in range(n_bins):
+            mask = bin_indices == i
+            if not mask.any():
+                continue
+            subset = [recs[j] for j in range(len(recs)) if mask[j]]
+            dist_mid = 10.0 ** ((bin_edges[i] + bin_edges[i + 1]) / 2.0)
+            conv = [r for r in subset if r.converged]
+            buckets[i] = BucketStats(
+                dist_mid=dist_mid,
+                count=len(subset),
+                converge_rate=len(conv) / len(subset),
+                mean_iters=float(np.mean([r.iters for r in conv])) if conv else 0.0,
+                mean_max_dq=float(np.nanmean([r.max_dq_norm for r in subset])),
+                mean_manip=float(np.nanmean([r.manipulability for r in subset])),
+            )
+        result[key] = buckets
+    return result
+
+
+def plot_sweep_comparison(
+    agg: dict[tuple[str, str, str], dict[int, BucketStats]],
+    sweep_mode: str,
+    *,
+    out_png: Path,
+    methods: list[str],
+) -> None:
+    """每张图 4 行（四种工况）× 3 列（收敛率 / ‖Δq‖ / 可操作度）。"""
+    import matplotlib.pyplot as plt
+
+    cases = ["wrist", "elbow", "shoulder", "boundary"]
+    case_labels = ["手腕奇异", "肘部奇异", "肩部奇异", "边界奇异"]
+    colors = {"pinv": "#d62728", "dls_0.02": "#2ca02c", "dls_0.05": "#1f77b4", "dls_0.2": "#9467bd"}
+    labels_map = {"pinv": "伪逆"}
+
+    fig, axes = plt.subplots(4, 3, figsize=(14, 16), constrained_layout=True)
+    fig.suptitle(f"奇异点稳定性 — 逼近方式: {sweep_mode}", fontsize=14)
+
+    for row, case in enumerate(cases):
+        for method in methods:
+            key = (case, sweep_mode, method)
+            buckets = agg.get(key, {})
+            if not buckets:
+                continue
+            bin_ids = sorted(buckets.keys())
+            dists = [buckets[i].dist_mid for i in bin_ids]
+            converge = [buckets[i].converge_rate for i in bin_ids]
+            dq_vals = [buckets[i].mean_max_dq for i in bin_ids]
+            manip = [buckets[i].mean_manip for i in bin_ids]
+            label = labels_map.get(method, method)
+            c = colors.get(method, "#333")
+
+            axes[row, 0].semilogx(dists, converge, marker=".", color=c, label=label)
+            axes[row, 0].set_ylabel("收敛率")
+            axes[row, 0].grid(True, alpha=0.3)
+
+            axes[row, 1].loglog(dists, dq_vals, marker=".", color=c, label=label)
+            axes[row, 1].set_ylabel(r"最大 $\|\Delta q\|$")
+            axes[row, 1].grid(True, alpha=0.3)
+
+            axes[row, 2].semilogx(dists, manip, marker=".", color=c, label=label)
+            axes[row, 2].set_ylabel("可操作度")
+            axes[row, 2].grid(True, alpha=0.3)
+
+        for col in range(3):
+            axes[row, col].set_xlabel("奇异距离")
+            axes[row, col].set_title(f"{case_labels[row]}")
+            if row == 0 and col == 0:
+                axes[row, col].legend(fontsize=8)
+
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_png, dpi=160)
+    plt.close(fig)
