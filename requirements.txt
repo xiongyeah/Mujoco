@@ -1,9 +1,1 @@
-# FR3_sim_plan · M1–M6 + M7 prep
-mujoco>=3.2.0
-numpy>=1.26
-scipy>=1.11
-matplotlib>=3.8
-sympy>=1.12
-
-# M7 Behavior Cloning（需要时再装，体积大）
-# torch --index-url https://download.pytorch.org/whl/cu124
+numpy>=1.22
