@@ -84,7 +84,7 @@ def inverse_kinematics(
     target_pose: np.ndarray,
     q_init: np.ndarray,
     *,
-    method: IkMethod = "pinv",
+    method: IkMethod = "dls",
     max_iters: int = 500,
     tol: float = 7e-4,
     rcond: float = 1e-4,
@@ -98,7 +98,7 @@ def inverse_kinematics(
     Parameters
     ----------
     method
-        ``'pinv'``：伪逆单步；``'dls'``：阻尼最小二乘单步。
+        ``'pinv'``：伪逆单步；``'dls'``：阻尼最小二乘单步（默认 ``'dls'``）。
     damping
         仅 ``method='dls'`` 时使用，为 :math:`\lambda`（默认 ``0.05``）。
 

@@ -35,6 +35,12 @@ _REF_WRIST = np.array([0.0, -0.35, 0.4, -1.35, 0.0, 1.55, -0.25], dtype=np.float
 _REF_ELBOW = np.array([0.0, -0.35, -0.5, -1.35, 0.05, 1.55, -0.25], dtype=np.float64)
 _REF_SHOULDER = np.array([0.0, -0.35, np.pi / 2, -1.35, 0.05, 1.55, -0.25], dtype=np.float64)
 _REF_BOUNDARY = np.array([0.0, -0.35, 0.4, -1.35, 0.05, 2.5, -0.25], dtype=np.float64)
+# 合法关节初值（避免 q4=0 等越限零向量）；各工况共用，便于 pinv/dls 公平对比
+_Q_IK_INIT = np.clip(
+    np.array([0.0, -0.3, 0.3, -1.2, 0.1, 1.8, 0.0], dtype=np.float64),
+    _FRANKA_Q_MIN,
+    _FRANKA_Q_MAX,
+)
 
 
 @dataclass
@@ -127,19 +133,22 @@ def case_wrist_targets(
 
 
 def case_elbow_targets(
-    q3_vals: np.ndarray,
+    q4_vals: np.ndarray,
     ref: np.ndarray,
 ) -> dict[str, list[tuple[float, np.ndarray]]]:
-    """肘部奇异：修改 q3 趋近上限（手臂伸直）。"""
-    q3_max = float(_FRANKA_Q_MAX[2])
+    """肘部奇异：修改 **q4（肩关节下第二连杆）** 趋近上界 -0.0698（手臂接近伸直）。
+
+    注意：Franka 系 **q4 上界约为 -0.0698 rad**，不是 q3；扫 q3 到 +2.9 与「肘伸直」无关。
+    """
+    q4_max = float(_FRANKA_Q_MAX[3])
     targets: dict[str, list[tuple[float, np.ndarray]]] = {
         "joint": [], "task": [], "random": []
     }
-    for q3 in q3_vals:
+    for q4 in q4_vals:
         q = ref.copy().astype(np.float64)
-        q[2] = q3
+        q[3] = q4
         T = forward_kinematics(q)
-        dist = abs(q3_max - q3)
+        dist = abs(q4_max - q4)
         targets["joint"].append((dist, T.copy()))
         for sign in [-1, 1]:
             Tt = T.copy()
@@ -147,11 +156,11 @@ def case_elbow_targets(
             targets["task"].append((dist, Tt))
     rng = np.random.default_rng(20260515)
     for _ in range(200):
-        q3_pert = rng.uniform(-1.5, q3_max - 0.01)
+        q4_pert = rng.uniform(-2.5, q4_max - 0.01)
         q = ref.copy().astype(np.float64)
-        q[2] = q3_pert
+        q[3] = q4_pert
         T = forward_kinematics(q)
-        dist = abs(q3_max - q3_pert)
+        dist = abs(q4_max - q4_pert)
         targets["random"].append((dist, T.copy()))
     return targets
 
@@ -171,7 +180,7 @@ def case_shoulder_targets(
             q[0] = q1
             q[2] = q3
             T = forward_kinematics(q)
-            _, _, J = _task_error_and_jacobian(q, T, position_only=False)
+            J = jacobian(q)
             s = np.linalg.svd(J, compute_uv=False)
             dist = 1.0 - s[-1] / (s[0] + 1e-15)
             targets["joint"].append((dist, T.copy()))
@@ -187,7 +196,7 @@ def case_shoulder_targets(
         q[0] = q1_pert
         q[2] = q3_pert
         T = forward_kinematics(q)
-        _, _, J = _task_error_and_jacobian(q, T, position_only=False)
+        J = jacobian(q)
         s = np.linalg.svd(J, compute_uv=False)
         dist = 1.0 - s[-1] / (s[0] + 1e-15)
         targets["random"].append((dist, T.copy()))
@@ -228,18 +237,19 @@ def define_cases(
     seed: int,
 ) -> dict[str, dict[str, list[tuple[float, np.ndarray]]]]:
     """返回 {case_name: {sweep_mode: [(singular_dist, T_des), ...]}}。"""
+    _ = seed  # 预留：若随机工况与 seed 挂钩可在此使用
     q5_vals = [
         -2.0, -1.0, -0.5, -0.2, -0.1, -0.05, -0.02, -0.01, -0.005,
         0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0,
     ]
-    q3_max = float(_FRANKA_Q_MAX[2])
-    q3_vals = np.linspace(-1.5, q3_max, 36).tolist()
+    q4_max = float(_FRANKA_Q_MAX[3])
+    q4_vals = np.linspace(-2.5, q4_max - 0.01, 36).tolist()
     q1_vals = np.linspace(-0.5, 0.5, 7).tolist()
     q3_vals_s = np.linspace(np.pi / 2 - 0.5, np.pi / 2 + 0.5, 7).tolist()
 
     cases = {
         "wrist": case_wrist_targets(np.array(q5_vals, dtype=np.float64), _REF_WRIST),
-        "elbow": case_elbow_targets(np.array(q3_vals, dtype=np.float64), _REF_ELBOW),
+        "elbow": case_elbow_targets(np.array(q4_vals, dtype=np.float64), _REF_ELBOW),
         "shoulder": case_shoulder_targets(np.array(q1_vals, dtype=np.float64), np.array(q3_vals_s, dtype=np.float64), _REF_SHOULDER),
         "boundary": case_boundary_targets(np.linspace(2.0, _FRANKA_Q_MAX[5], 20), _REF_BOUNDARY),
     }
@@ -261,7 +271,7 @@ def collect_records(
     for case_name, sweep_dict in cases.items():
         for sweep_mode, target_list in sweep_dict.items():
             for singular_dist, T_des in target_list:
-                q_init = np.zeros(7, dtype=np.float64)
+                q_init = _Q_IK_INIT.copy()
                 for method in methods:
                     q_sol, iters, final_err, max_dq = solve_and_record(
                         T_des,
