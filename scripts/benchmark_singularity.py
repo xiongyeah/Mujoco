@@ -244,3 +244,45 @@ def define_cases(
         "boundary": case_boundary_targets(np.linspace(2.0, _FRANKA_Q_MAX[5], 20), _REF_BOUNDARY),
     }
     return cases
+
+
+def collect_records(
+    cases: dict[str, dict[str, list[tuple[float, np.ndarray]]]],
+    *,
+    methods: list[str],
+    tol: float,
+    max_iters: int,
+    rcond: float,
+    step_scale: float,
+) -> list[TrialRecord]:
+    """遍历所有工况 × 逼近方式 × 方法，采集记录。"""
+    records: list[TrialRecord] = []
+
+    for case_name, sweep_dict in cases.items():
+        for sweep_mode, target_list in sweep_dict.items():
+            for singular_dist, T_des in target_list:
+                q_init = np.zeros(7, dtype=np.float64)
+                for method in methods:
+                    q_sol, iters, final_err, max_dq = solve_and_record(
+                        T_des,
+                        q_init,
+                        method=method,
+                        tol=tol,
+                        max_iters=max_iters,
+                        rcond=rcond,
+                        step_scale=step_scale,
+                    )
+                    manip = manipulability(q_sol)
+                    converged = final_err < tol
+                    records.append(TrialRecord(
+                        case=case_name,
+                        sweep_mode=sweep_mode,
+                        singular_dist=singular_dist,
+                        method=method,
+                        converged=converged,
+                        iters=iters,
+                        final_err=final_err,
+                        max_dq_norm=max_dq,
+                        manipulability=manip,
+                    ))
+    return records
