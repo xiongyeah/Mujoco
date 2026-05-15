@@ -88,7 +88,7 @@ $$
 
 ---
 
-## 4. 等价「右形式」：$J^{\top} ( J J^{\top} + \lambda^{2} I_{m} )^{-1} e$
+## 4. 等价「右形式」： $J^{\top} ( J J^{\top} + \lambda^{2} I_{m} )^{-1} e$
 
 与专栏 **2.3 阻尼最小二乘法** 中写出的形式一致（记号 $\Delta\theta$ 与 $\Delta q$、$e$ 与误差向量同义）：
 
@@ -131,10 +131,10 @@ $$
 
 与**普通伪逆**（无阻尼）在同一展开形式下可写为 $\sum_i \tau_i\, v_i u_i^{\top}$ 时：
 
-- **DLS**：$\tau_i^{\text{DLS}} = \sigma_i / (\sigma_i^{2} + \lambda^{2})$；
-- **简单伪逆**：$\tau_i^{\text{pinv}} = 1 / \sigma_i$（当 $\sigma_i \to 0$ 时无界）。
+- **DLS**： $\tau_i^{\mathrm{DLS}} = \sigma_i / (\sigma_i^{2} + \lambda^{2})$；
+- **简单伪逆**： $\tau_i^{\mathrm{pinv}} = 1 / \sigma_i$（当 $\sigma_i \to 0$ 时无界）。
 
-直观上：$\tau_i^{\text{DLS}}$ 在 $\sigma_i \to 0$ 时趋于 $0$（有界），而 $\tau_i^{\text{pinv}}$ 爆炸；故 DLS 在奇异附近**稳定**。另：矩阵 $(J J^{\top} + \lambda^{2} I)^{-1}$ 在 $J J^{\top}$ 的特征基下，特征值由 $1/\sigma_i^2$ 变为 $1/(\sigma_i^{2} + \lambda^{2})$；再左乘 $J^{\top}$ 后得到上式系数 $\sigma_i/(\sigma_i^{2}+\lambda^{2})$，两者叙述一致、层次不同。
+直观上： $\tau_i^{\mathrm{DLS}}$ 在 $\sigma_i \to 0$ 时趋于 $0$（有界），而 $\tau_i^{\mathrm{pinv}}$ 爆炸；故 DLS 在奇异附近**稳定**。另：矩阵 $(J J^{\top} + \lambda^{2} I)^{-1}$ 在 $J J^{\top}$ 的特征基下，特征值由 $1/\sigma_i^2$ 变为 $1/(\sigma_i^{2} + \lambda^{2})$；再左乘 $J^{\top}$ 后得到上式系数 $\sigma_i/(\sigma_i^{2}+\lambda^{2})$，两者叙述一致、层次不同。
 
 **专栏补充（SDLS）**：对各奇异方向采用**不同**阻尼、依赖当前位形与误差，可少迭代、少调参，但需完整 SVD，计算量更大；本文档不展开，实现时与常数 $\lambda$ 的 DLS 区分即可。
 
