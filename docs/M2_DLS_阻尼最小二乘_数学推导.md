@@ -84,7 +84,7 @@ $$
 J^{\top} e.
 $$
 
-此式常称为 DLS 的 **「左形式」**（$n \times n$ 求逆，$n=7$ 时规模小，适合实现）。
+此式常称为 DLS 的 **「左形式」**（ $n \times n$ 求逆，$n=7$ 时规模小，适合实现）。
 
 ---
 
@@ -151,7 +151,7 @@ $$
 \Delta q = J^{\top} \left( J J^{\top} + \lambda^{2} I \right)^{-1} e \,;
 $$
 
-3. 更新 $q \leftarrow q + \alpha \, \Delta q$（$\alpha$ 为步长，可与伪逆迭代相同）。
+3. 更新 $q \leftarrow q + \alpha \, \Delta q$（ $\alpha$ 为步长，可与伪逆迭代相同）。
 
 重复直至 $\| e \| < \varepsilon$ 或达最大迭代次数。
 
@@ -171,7 +171,7 @@ $$
 
 | 方法 | 一步 $\Delta q$（右形式示意） |
 |------|-------------------------------|
-| 伪逆 | $J^{\top} \left( J J^{\top} \right)^{-1} e$（$J J^\top$ 可逆时） |
+| 伪逆 | $J^{\top} \left( J J^{\top} \right)^{-1} e$（ $J J^\top$ 可逆时） |
 | DLS | $J^{\top} \left( J J^{\top} + \lambda^{2} I \right)^{-1} e$ |
 
 `numpy.linalg.lstsq(J, e)` 求的是 **无正则** 的 $\min \| J\Delta q - e \|^2$ 的最小范数解；**DLS 不能**用「同一个 `lstsq(J,e)`」直接代替，需显式实现上式或左形式 $\left( J^{\top} J + \lambda^{2} I \right)^{-1} J^{\top} e$。
