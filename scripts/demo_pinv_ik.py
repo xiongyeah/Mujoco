@@ -21,15 +21,15 @@ def main() -> None:
 
     q0 = np.zeros(7, dtype=np.float64)  # 迭代初值 q^{(0)}
     # 调用整条伪逆迭代：内部重复「FK→e→J→lstsq→更新 q」直至 ‖e‖<tol
-    q_sol, iters, err = inverse_kinematics(T_des, q0, method="pinv")
+    q_sol, info = inverse_kinematics(T_des, q0, method="pinv")
 
     # 验算：用解出的 q_sol 再做 FK，与 T_des 比 6 维位姿误差
     T_act = forward_kinematics(q_sol)
     err6 = pose_error_se3(T_act, T_des)
 
     print("伪逆 IK（pinv）")
-    print(f"  迭代次数: {iters}")
-    print(f"  终范数误差 ||e||: {err:.6e}")
+    print(f"  迭代次数: {info['iters']}")
+    print(f"  终位置误差: {info['pos_err']:.2e}  终旋转误差: {info['rot_err']:.2e}")
     print(f"  位姿误差向量范数: {np.linalg.norm(err6):.6e}")
     print(f"  q_sol: {np.array2string(q_sol, precision=4, suppress_small=True)}")
 

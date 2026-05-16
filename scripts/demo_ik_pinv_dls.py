@@ -22,7 +22,7 @@ def run_case(
     T_des: np.ndarray,
     q0: np.ndarray,
 ) -> None:
-    q_sol, iters, err = inverse_kinematics(
+    q_sol, info = inverse_kinematics(
         T_des,
         q0,
         method=cast(Literal["pinv", "dls"], method),
@@ -30,7 +30,8 @@ def run_case(
     )
     T_act = forward_kinematics(q_sol)
     err6 = pose_error_se3(T_act, T_des)
-    print(f"[{method}] 迭代={iters}  终||e||={err:.6e}  验算||e6||={np.linalg.norm(err6):.6e}")
+    print(f"[{method}] 迭代={info['iters']}  终pos_err={info['pos_err']:.2e}  rot_err={info['rot_err']:.2e}  耗时={info['time']:.4f}s")
+    print(f"       验算||e6||={np.linalg.norm(err6):.6e}")
     print(f"       q_sol={np.array2string(q_sol, precision=4, suppress_small=True)}")
 
 

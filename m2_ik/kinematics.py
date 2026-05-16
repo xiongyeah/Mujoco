@@ -1,9 +1,12 @@
 """
-FR3 正运动学与几何雅可比（与 Franka Research 3 官方 DH / menagerie 几何一致）。
+FR3 正运动学、几何雅可比与重力矩（与 INTERFACE_SPEC_v0.md 第 1 节对齐）。
 
-对外接口（与队内规范对齐）：
+对外接口
+-------
 - ``forward_kinematics(q)`` → 末端 4×4 齐次矩阵
 - ``jacobian(q)`` → 几何雅可比 J ∈ ℝ^{6×7}
+- ``gravity(q)`` → 关节空间重力力矩 τ_g ∈ ℝ^{7}
+- ``forward_kinematics_all_links(q)`` → 各连杆 4×4 矩阵列表（可选）
 """
 
 from __future__ import annotations
@@ -106,3 +109,103 @@ def jacobian(q: np.ndarray, ee_offset_local: np.ndarray | None = None) -> np.nda
         J[:3, j] = np.cross(z_j, p_e - o_j)
         J[3:, j] = z_j
     return J
+
+
+# ── 末端偏移参数（与 jacobian 默认 ee_offset_local 一致） ──
+_EE_OFFSET = np.array([0.0, 0.0, 0.107], dtype=np.float64)
+
+
+def forward_kinematics_all_links(q: np.ndarray) -> list[np.ndarray]:
+    """返回 link1 ∼ link7 + flange 在基座系下的 4×4 齐次矩阵，共 8 个。"""
+    q = np.asarray(q, dtype=np.float64).reshape(7)
+    frames: list[np.ndarray] = []
+    T = np.eye(4, dtype=np.float64)
+    for j in range(7):
+        Aj = _segment_fixed_A(j)
+        T = T @ Aj @ homogeneous(rotz(q[j]), np.zeros(3))
+        frames.append(T.copy())
+    # flange = link7 + 末端偏移
+    frames.append(T @ trans(_EE_OFFSET[0], _EE_OFFSET[1], _EE_OFFSET[2]))
+    return frames
+
+
+# ── FR3 连杆质量与质心偏移（来自 menagerie MJCF / franka_ros） ──
+# 每项：(mass_kg, com_xyz_in_link_frame)
+_LINK_INERTIA: list[tuple[float, np.ndarray]] = [
+    (4.0, np.array([0.0, 0.0, 0.015])),        # link1
+    (4.0, np.array([0.0001, -0.106, 0.003])),   # link2
+    (3.0, np.array([0.070, 0.0, 0.040])),        # link3
+    (3.5, np.array([0.035, 0.0, 0.017])),        # link4
+    (2.5, np.array([0.010, 0.0, 0.030])),        # link5
+    (1.5, np.array([0.0, 0.0, 0.004])),          # link6
+    (0.5, np.array([0.0, 0.0, 0.050])),          # link7（含法兰）
+]
+_GRAVITY = 9.81  # m/s², -z 方向
+
+
+def gravity(q: np.ndarray) -> np.ndarray:
+    r"""计算 FR3 在当前关节角下的关节空间重力力矩。
+
+    Parameters
+    ----------
+    q : (7,)
+        关节角，单位 rad。
+
+    Returns
+    -------
+    g : (7,)
+        重力补偿力矩，单位 N·m。
+
+    Notes
+    -----
+    基于各连杆 CoM（质心）在 world frame 下的位置，通过
+    :math:`\tau_{g,j} = \sum_{i=j}^{7} m_i \, \mathbf{g}
+    \cdot \bigl( \mathbf{z}_j \times (\mathbf{p}_{\mathrm{com},i}
+    - \mathbf{o}_j) \bigr)` 计算。
+
+    ``_LINK_INERTIA`` 中的质量与 CoM 偏移来自 Franka menagerie MJCF，
+    与 MuJoCo 模型一致；**不依赖 MuJoCo 运行时**，适合无仿真环境的 IK /
+    控制器调试。
+    """
+    q = np.asarray(q, dtype=np.float64).reshape(7)
+
+    # 第一步：前向递推各关节的 {z_j, o_j} 与各连杆 CoM 世界坐标
+    T = np.eye(4, dtype=np.float64)
+    z_cols: list[np.ndarray] = []   # 关节轴方向 (世界系)
+    o_cols: list[np.ndarray] = []   # 关节原点 (世界系)
+    com_positions: list[np.ndarray] = []  # 各连杆 CoM 世界坐标
+
+    for j in range(7):
+        Aj = _segment_fixed_A(j)
+        P = T @ Aj                     # 关节 j 的基座侧变换
+        z_cols.append(P[:3, :2].copy())  # 注意：z 轴是第 3 列
+        # 修正：z_j = R_j[:, 2]
+        z_cols[j] = P[:3, 2].copy()
+        o_cols.append(P[:3, 3].copy())
+
+        # 关节 j 旋转后的变换
+        T_joint = T @ Aj @ homogeneous(rotz(q[j]), np.zeros(3))
+
+        # link j 的 CoM 在 world frame 下的位置
+        mass, com_local = _LINK_INERTIA[j]
+        T_com = T_joint @ trans(com_local[0], com_local[1], com_local[2])
+        com_positions.append(T_com[:3, 3].copy())
+
+        T = T_joint
+
+    # 第二步：计算重力矩
+    g_vec = np.array([0.0, 0.0, -_GRAVITY], dtype=np.float64)
+    tau_g = np.zeros(7, dtype=np.float64)
+
+    for j in range(7):
+        z_j = z_cols[j]
+        o_j = o_cols[j]
+        total = 0.0
+        for i in range(j, 7):  # 只有 j ≤ i 的连杆有贡献
+            m_i, _ = _LINK_INERTIA[i]
+            p_com = com_positions[i]
+            # τ_g,j += m_i * g · (z_j × (p_com - o_j))
+            total += m_i * float(np.dot(g_vec, np.cross(z_j, p_com - o_j)))
+        tau_g[j] = total
+
+    return tau_g

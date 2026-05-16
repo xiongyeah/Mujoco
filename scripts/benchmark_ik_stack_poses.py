@@ -145,18 +145,21 @@ def run_trial(
 ) -> tuple[bool, int, float, float, float]:
     """返回 (converged, iters, wall_time_s, err_task_norm, err_geom_norm)。"""
     t0 = time.perf_counter()
-    q_sol, iters, err_task = inverse_kinematics(
+    q_sol, info = inverse_kinematics(
         T_des,
         q0,
         method=cast(IkMethod, method),
         damping=damping,
-        tol=tol,
-        max_iters=max_iters,
+        max_iter=max_iters,
+        tol_pos=tol,
+        tol_rot=tol,
         rcond=rcond,
         step_scale=step_scale,
     )
     wall = time.perf_counter() - t0
-    converged = err_task < tol
+    converged = info["converged"]
+    err_task = max(info["pos_err"], info["rot_err"])
+    iters = info["iters"]
     T_act = forward_kinematics(q_sol)
     e6 = pose_error_se3(T_act, T_des)
     err_geom = float(np.linalg.norm(e6))
